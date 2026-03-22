@@ -1,9 +1,9 @@
 """
 chatbot_logic.py - логика чат-бота «Анти-Похмелье»
-Режимы: базовый чат, диагностика похмелья, советы по застолью, тосты, факты
 """
 
 import re
+import random
 from rag_system import RAGSystem
 
 ALCOHOL_CONTENT = {
@@ -53,32 +53,24 @@ TOAST_CATEGORIES = {
         "Жизнь сложная штука. Но с правильными людьми и напитками она значительно веселее. За нас!",
     ]),
 }
-    "birthday":  ("🎂 День рождения", "тосты день рождения поздравление"),
-    "wedding":   ("💍 Свадьба",        "тосты свадьба молодые"),
-    "man":       ("👨 Мужчине",        "тосты мужчине"),
-    "woman":     ("👩 Женщине",        "тосты женщине"),
-    "newyear":   ("🎄 Новый год",      "тосты новый год"),
-    "funny":     ("😄 Юмористический", "тосты юмористические смешной"),
-}
 
 
 def parse_amount_to_ml(text: str) -> tuple:
     text_low = text.lower()
-
     drink_type = "водка"
     if any(w in text_low for w in ["пив", "beer"]):
         drink_type = "пиво"
-    elif any(w in text_low for w in ["шампан"]):
+    elif "шампан" in text_low:
         drink_type = "шампанское"
     elif any(w in text_low for w in ["вин", "wine"]):
         drink_type = "вино"
     elif any(w in text_low for w in ["коньяк", "cognac"]):
         drink_type = "коньяк"
-    elif any(w in text_low for w in ["виски", "whisky", "whiskey"]):
+    elif any(w in text_low for w in ["виски", "whisky"]):
         drink_type = "виски"
 
     nums = re.findall(
-        r"(\d+(?:[.,]\d+)?)\s*(литр[а-я]*|л\b|liter|ml|мл|г\b|грамм[а-я]*|бутылк[а-я]*|стакан[а-я]*|бокал[а-я]*|рюмк[а-я]*|банк[а-я]*)",
+        r"(\d+(?:[.,]\d+)?)\s*(литр[а-я]*|л\b|ml|мл|г\b|грамм[а-я]*|бутылк[а-я]*|стакан[а-я]*|бокал[а-я]*|рюмк[а-я]*|банк[а-я]*)",
         text_low,
     )
 
@@ -93,14 +85,14 @@ def parse_amount_to_ml(text: str) -> tuple:
     total_ml = 0.0
     for val_str, unit in nums:
         val = float(val_str.replace(",", "."))
-        if any(u in unit for u in ["литр", "liter"]) or unit == "л":
+        if "литр" in unit or unit == "л":
             total_ml += val * 1000
         elif unit in ("ml", "мл"):
             total_ml += val
-        elif unit in ("г", ) or "грамм" in unit:
+        elif unit in ("г",) or "грамм" in unit:
             total_ml += val
         elif "бутылк" in unit:
-            total_ml += val * (500 if drink_type == "пиво" else 500)
+            total_ml += val * 500
         elif "стакан" in unit or "бокал" in unit:
             total_ml += val * 200
         elif "рюмк" in unit:
@@ -136,8 +128,7 @@ class AntiHangoverBot:
                 ),
             },
             "how_are_you": {
-                "triggers": ["как дела", "как ты", "как сам", "что делаешь",
-                             "как жизнь", "как настроение"],
+                "triggers": ["как дела", "как ты", "как сам", "что делаешь", "как жизнь"],
                 "response": "Нормально, спасибо! Сижу жду когда кто-нибудь перепьёт 😄 А у тебя как?",
             },
             "who_are_you": {
@@ -174,8 +165,7 @@ class AntiHangoverBot:
             "буду пить", "как пить", "правильно пить", "перед вечеринкой",
         ]
         self.fact_triggers = [
-            "факт", "интересно", "расскажи", "не знал", "про алкоголь",
-            "знаешь ли", "миф",
+            "факт", "интересно", "расскажи", "не знал", "про алкоголь", "миф",
         ]
 
         self.questions = [
@@ -227,7 +217,6 @@ class AntiHangoverBot:
         if diagnosis_mode:
             return self._handle_diagnosis(user_input, diagnosis_step, user_profile)
 
-        # Обработка выбора категории тоста
         if toast_mode:
             return self._get_toast_by_key(user_input)
 
@@ -283,12 +272,8 @@ class AntiHangoverBot:
         )
 
     def _show_toast_menu(self) -> dict:
-        text = (
-            "## 📜 Выбери повод для тоста\n\n"
-            "Нажми на кнопку с нужной категорией 👇"
-        )
         return {
-            "text": text,
+            "text": "## 📜 Выбери повод для тоста\n\nНажми на кнопку с нужной категорией 👇",
             "diagnosis_mode": False,
             "diagnosis_step": 0,
             "user_profile": {},
@@ -296,36 +281,27 @@ class AntiHangoverBot:
         }
 
     def _get_toast_by_key(self, key: str) -> dict:
-    import random
-    if key not in TOAST_CATEGORIES:
-        return self._make_response(
-            "Не нашёл такую категорию. Нажми кнопку «📜 Тост».",
-            False, 0, {}
-        )
-    label, toasts = TOAST_CATEGORIES[key]
-    toast = random.choice(toasts)
-    text = f"## {label}\n\n{toast}\n\n---\n*Нажми «📜 Тост» ещё раз - подберу другой!*"
-    return self._make_response(text, False, 0, {})
-            
-        label, query = TOAST_CATEGORIES[key]
-        rag_info = self.rag.query(query, k=2)
-        text = f"## {label}\n\n"
-        text += rag_info if rag_info else "Будем здоровы! 🥂"
-        text += "\n\n---\n*Нажми «📜 Тост» ещё раз - подберу другой!*"
+        if key not in TOAST_CATEGORIES:
+            return self._make_response(
+                "Не нашёл такую категорию. Нажми кнопку «📜 Тост».",
+                False, 0, {}
+            )
+        label, toasts = TOAST_CATEGORIES[key]
+        toast = random.choice(toasts)
+        text = f"## {label}\n\n{toast}\n\n---\n*Нажми «📜 Тост» ещё раз - подберу другой!*"
         return self._make_response(text, False, 0, {})
 
     def _prep_advice(self) -> dict:
         rag_info = self.rag.query("подготовка застолье как правильно пить советы", k=3)
         text = "## 🥂 Как подготовиться к застолью\n\n"
-        if rag_info:
-            text += rag_info
+        text += rag_info if rag_info else "Поешь перед тем как пить, пей воду между порциями, не мешай напитки."
         text += "\n\n---\n💡 *Если всё же перестарался - напиши **«мне плохо»**.*"
         return self._make_response(text, False, 0, {})
 
     def _get_fact(self) -> dict:
         rag_info = self.rag.query("интересный факт алкоголь миф правда", k=2)
         text = "## 💡 Интересный факт\n\n"
-        text += rag_info if rag_info else "Алкоголь перерабатывается со скоростью ~10 мл чистого спирта в час. Ускорить этот процесс невозможно!"
+        text += rag_info if rag_info else "Алкоголь перерабатывается со скоростью ~10 мл чистого спирта в час. Ускорить невозможно!"
         text += "\n\n---\n*Напиши **«ещё факт»** - расскажу следующий!*"
         return self._make_response(text, False, 0, {})
 
@@ -407,10 +383,7 @@ class AntiHangoverBot:
         if rag_info:
             result += f"\n\n### 📖 Дополнительно\n\n{rag_info}"
 
-        result += (
-            "\n\n---\n"
-            "⚠️ *При судорогах, боли в груди или потере сознания - скорая (103).*"
-        )
+        result += "\n\n---\n⚠️ *При судорогах, боли в груди или потере сознания - скорая (103).*"
 
         return result
 
