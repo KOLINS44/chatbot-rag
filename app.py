@@ -63,7 +63,6 @@ def load_bot():
 if "bot" not in st.session_state:
     with st.spinner("⏳ Загрузка модели и базы знаний..."):
         st.session_state.bot = load_bot()
-```
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
