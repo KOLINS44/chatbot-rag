@@ -4,46 +4,51 @@ chatbot_logic.py - логика чат-бота «Анти-Похмелье»
 """
 
 import re
-import random
 from rag_system import RAGSystem
 
-
-# Содержание чистого спирта (грамм) в стандартной порции
 ALCOHOL_CONTENT = {
-    "пиво":    {"density": 0.8, "abv": 0.05},   # 5% об.
-    "вино":    {"density": 0.8, "abv": 0.12},   # 12% об.
-    "водка":   {"density": 0.8, "abv": 0.40},   # 40% об.
-    "коньяк":  {"density": 0.8, "abv": 0.40},
-    "виски":   {"density": 0.8, "abv": 0.40},
-    "шампанское": {"density": 0.8, "abv": 0.11},
+    "пиво":       {"abv": 0.05, "density": 0.8},
+    "вино":       {"abv": 0.12, "density": 0.8},
+    "шампанское": {"abv": 0.11, "density": 0.8},
+    "водка":      {"abv": 0.40, "density": 0.8},
+    "коньяк":     {"abv": 0.40, "density": 0.8},
+    "виски":      {"abv": 0.40, "density": 0.8},
+}
+
+TOAST_CATEGORIES = {
+    "birthday":  ("🎂 День рождения", "тосты день рождения поздравление"),
+    "wedding":   ("💍 Свадьба",        "тосты свадьба молодые"),
+    "man":       ("👨 Мужчине",        "тосты мужчине"),
+    "woman":     ("👩 Женщине",        "тосты женщине"),
+    "newyear":   ("🎄 Новый год",      "тосты новый год"),
+    "funny":     ("😄 Юмористический", "тосты юмористические смешной"),
 }
 
 
-def parse_amount_to_ml(text: str) -> tuple[float, str]:
-    """
-    Пытается извлечь объём в мл из произвольной строки.
-    Возвращает (объём_мл, тип_напитка).
-    """
+def parse_amount_to_ml(text: str) -> tuple:
     text_low = text.lower()
 
-    # Определяем тип напитка
     drink_type = "водка"
     if any(w in text_low for w in ["пив", "beer"]):
         drink_type = "пиво"
-    elif any(w in text_low for w in ["вин", "wine", "шампан"]):
+    elif any(w in text_low for w in ["шампан"]):
+        drink_type = "шампанское"
+    elif any(w in text_low for w in ["вин", "wine"]):
         drink_type = "вино"
     elif any(w in text_low for w in ["коньяк", "cognac"]):
         drink_type = "коньяк"
     elif any(w in text_low for w in ["виски", "whisky", "whiskey"]):
         drink_type = "виски"
 
-    # Ищем числа
-    nums = re.findall(r"(\d+(?:[.,]\d+)?)\s*(литр|л\b|liter|ml|мл|г\b|грамм|бутылк|стакан|бокал|рюмк|банк)", text_low)
+    nums = re.findall(
+        r"(\d+(?:[.,]\d+)?)\s*(литр[а-я]*|л\b|liter|ml|мл|г\b|грамм[а-я]*|бутылк[а-я]*|стакан[а-я]*|бокал[а-я]*|рюмк[а-я]*|банк[а-я]*)",
+        text_low,
+    )
+
     if not nums:
         nums_raw = re.findall(r"\d+(?:[.,]\d+)?", text_low)
         if nums_raw:
             val = float(nums_raw[0].replace(",", "."))
-            # Эвристика: если число > 10 - скорее всего мл/г, иначе - порции
             volume_ml = val if val > 10 else val * (500 if drink_type == "пиво" else 100)
             return volume_ml, drink_type
         return 300.0, drink_type
@@ -51,16 +56,15 @@ def parse_amount_to_ml(text: str) -> tuple[float, str]:
     total_ml = 0.0
     for val_str, unit in nums:
         val = float(val_str.replace(",", "."))
-        unit = unit.strip()
-        if unit in ("литр", "л", "liter"):
+        if any(u in unit for u in ["литр", "liter"]) or unit == "л":
             total_ml += val * 1000
         elif unit in ("ml", "мл"):
             total_ml += val
-        elif unit in ("г", "грамм"):
-            total_ml += val  # граммы ≈ мл для водки
+        elif unit in ("г", ) or "грамм" in unit:
+            total_ml += val
         elif "бутылк" in unit:
             total_ml += val * (500 if drink_type == "пиво" else 500)
-        elif unit in ("стакан", "бокал"):
+        elif "стакан" in unit or "бокал" in unit:
             total_ml += val * 200
         elif "рюмк" in unit:
             total_ml += val * 50
@@ -73,35 +77,31 @@ def parse_amount_to_ml(text: str) -> tuple[float, str]:
 
 
 def calc_pure_alcohol_g(volume_ml: float, drink_type: str) -> float:
-    """Вычисляет граммы чистого спирта."""
     info = ALCOHOL_CONTENT.get(drink_type, ALCOHOL_CONTENT["водка"])
     return volume_ml * info["abv"] * info["density"]
 
 
 class AntiHangoverBot:
-    """Чат-бот «Анти-Похмелье» с несколькими режимами работы."""
 
     def __init__(self):
         self.rag = RAGSystem("knowledge_base.txt")
 
-        # --- Базовые ответы ---
         self.basic_responses = {
             "greeting": {
                 "triggers": ["привет", "здравствуй", "здравствуйте", "хай",
                              "hello", "hi", "добрый день", "добрый вечер",
-                             "доброе утро", "салют", "хэй"],
+                             "доброе утро", "салют"],
                 "response": (
                     "Привет! 👋 Я бот «Анти-Похмелье».\n\n"
-                    "Выбери что тебя интересует или просто напиши:"
+                    "Помогу облегчить похмелье, подготовиться к застолью, "
+                    "подберу тост или расскажу интересный факт.\n\n"
+                    "Нажми кнопку или напиши что тебя интересует! 👇"
                 ),
             },
             "how_are_you": {
                 "triggers": ["как дела", "как ты", "как сам", "что делаешь",
-                             "как жизнь", "как настроение", "что нового"],
-                "response": (
-                    "Нормально, спасибо! Сижу жду когда кто-нибудь перепьёт 😄\n"
-                    "А у тебя как дела? Если плохо - помогу!"
-                ),
+                             "как жизнь", "как настроение"],
+                "response": "Нормально, спасибо! Сижу жду когда кто-нибудь перепьёт 😄 А у тебя как?",
             },
             "who_are_you": {
                 "triggers": ["кто ты", "что ты", "что умеешь", "что можешь",
@@ -110,16 +110,15 @@ class AntiHangoverBot:
                     "Я - бот «Анти-Похмелье» 🍺\n\n"
                     "**Что умею:**\n"
                     "- 😵 Диагностировать похмелье и давать персональные рекомендации\n"
-                    "- 🥂 Рассказать как правильно подготовиться к застолью\n"
+                    "- 🥂 Рассказать как подготовиться к застолью\n"
                     "- 📜 Подобрать тост на любой случай\n"
-                    "- 💡 Поделиться интересными фактами об алкоголе\n"
-                    "- 💬 Просто поговорить\n\n"
+                    "- 💡 Поделиться интересным фактом об алкоголе\n\n"
                     "Нажми кнопку или напиши что тебя интересует!"
                 ),
             },
             "thanks": {
                 "triggers": ["спасибо", "благодарю", "спс", "thanks", "сенкс"],
-                "response": "Пожалуйста! 🙏 Береги себя и не злоупотребляй.",
+                "response": "Пожалуйста! 🙏 Береги себя.",
             },
             "bye": {
                 "triggers": ["пока", "до свидания", "прощай", "bye", "до встречи"],
@@ -127,7 +126,6 @@ class AntiHangoverBot:
             },
         }
 
-        # --- Триггеры режимов ---
         self.hangover_triggers = [
             "похмелье", "похмельный", "бодун", "перепил", "выпил вчера",
             "плохо", "голова болит", "тошнит", "тошнота", "рвота",
@@ -137,18 +135,12 @@ class AntiHangoverBot:
         self.prep_triggers = [
             "подготовиться", "подготовка", "застолье", "собираюсь пить",
             "буду пить", "как пить", "правильно пить", "перед вечеринкой",
-            "перед праздником", "как подготовить",
-        ]
-        self.toast_triggers = [
-            "тост", "тосты", "за здоровье", "выпьем за", "поднять бокал",
-            "что сказать", "слово скажи",
         ]
         self.fact_triggers = [
-            "факт", "интересно", "расскажи", "не знал", "а знаешь",
-            "про алкоголь", "знаешь ли", "миф",
+            "факт", "интересно", "расскажи", "не знал", "про алкоголь",
+            "знаешь ли", "миф",
         ]
 
-        # --- Вопросы диагностики ---
         self.questions = [
             "Сколько тебе лет?",
             "Какой у тебя вес (в кг)?",
@@ -157,7 +149,7 @@ class AntiHangoverBot:
                 "1️⃣ Только пиво\n"
                 "2️⃣ Только вино\n"
                 "3️⃣ Только водка / крепкий алкоголь\n"
-                "4️⃣ Только коньяк / виски / бурбон\n"
+                "4️⃣ Только коньяк / виски\n"
                 "5️⃣ Всё подряд / ёрш"
             ),
             (
@@ -165,8 +157,7 @@ class AntiHangoverBot:
                 "Укажи объём и напиток, например:\n"
                 "- «2 литра пива»\n"
                 "- «300 мл водки»\n"
-                "- «4 бокала вина»\n"
-                "- «литр пива и 200 мл водки» (если смешивал)"
+                "- «4 бокала вина»"
             ),
             "Сколько часов назад закончил пить?",
             "Сколько часов удалось поспать?",
@@ -190,49 +181,43 @@ class AntiHangoverBot:
             "hours_since", "sleep_hours", "food", "symptoms",
         ]
 
-    # ------------------------------------------------------------------
-    # Главный метод
-    # ------------------------------------------------------------------
     def respond(self, user_input: str, diagnosis_mode: bool,
-                diagnosis_step: int, user_profile: dict) -> dict:
+                diagnosis_step: int, user_profile: dict,
+                toast_mode: bool = False) -> dict:
 
         text_lower = user_input.lower().strip()
 
         if diagnosis_mode:
             return self._handle_diagnosis(user_input, diagnosis_step, user_profile)
 
-        # Базовые ответы
+        # Обработка выбора категории тоста
+        if toast_mode:
+            return self._get_toast_by_key(user_input)
+
         for data in self.basic_responses.values():
             for trigger in data["triggers"]:
                 if trigger in text_lower:
                     return self._make_response(data["response"], False, 0, user_profile)
 
-        # Режим диагностики похмелья
         for trigger in self.hangover_triggers:
             if trigger in text_lower:
                 return self._make_response(
-                    "Понял, сейчас разберёмся! 🩺 Отвечай честно - "
-                    "чем точнее ответы, тем лучше рекомендации.\n\n"
+                    "Понял, сейчас разберёмся! 🩺 Отвечай честно.\n\n"
                     f"**{self.questions[0]}**",
                     True, 0, {},
                 )
 
-        # Режим подготовки к застолью
         for trigger in self.prep_triggers:
             if trigger in text_lower:
                 return self._prep_advice()
 
-        # Тосты
-        for trigger in self.toast_triggers:
-            if trigger in text_lower:
-                return self._get_toast(text_lower)
+        if any(t in text_lower for t in ["тост", "тосты", "выпьем", "бокал", "скажи тост"]):
+            return self._show_toast_menu()
 
-        # Факты
         for trigger in self.fact_triggers:
             if trigger in text_lower:
                 return self._get_fact()
 
-        # RAG - поиск по базе знаний
         rag_result = self.rag.query(user_input)
         if rag_result:
             return self._make_response(
@@ -242,14 +227,10 @@ class AntiHangoverBot:
             )
 
         return self._make_response(
-            "Не совсем понял 🤔 Попробуй переформулировать.\n\n"
-            "Или нажми одну из кнопок внизу.",
+            "Не совсем понял 🤔 Попробуй переформулировать.\n\nИли нажми одну из кнопок внизу.",
             False, 0, user_profile,
         )
 
-    # ------------------------------------------------------------------
-    # Диагностика
-    # ------------------------------------------------------------------
     def _handle_diagnosis(self, user_input: str, step: int, profile: dict) -> dict:
         key = self.profile_keys[step]
         profile[key] = user_input.strip()
@@ -264,9 +245,47 @@ class AntiHangoverBot:
             f"**{self.questions[next_step]}**", True, next_step, profile
         )
 
-    # ------------------------------------------------------------------
-    # Умный расчёт рекомендаций
-    # ------------------------------------------------------------------
+    def _show_toast_menu(self) -> dict:
+        text = (
+            "## 📜 Выбери повод для тоста\n\n"
+            "Нажми на кнопку с нужной категорией 👇"
+        )
+        return {
+            "text": text,
+            "diagnosis_mode": False,
+            "diagnosis_step": 0,
+            "user_profile": {},
+            "toast_menu": True,
+        }
+
+    def _get_toast_by_key(self, key: str) -> dict:
+        if key not in TOAST_CATEGORIES:
+            return self._make_response(
+                "Не нашёл такую категорию. Нажми кнопку «📜 Тост» и выбери повод.",
+                False, 0, {}
+            )
+        label, query = TOAST_CATEGORIES[key]
+        rag_info = self.rag.query(query, k=2)
+        text = f"## {label}\n\n"
+        text += rag_info if rag_info else "Будем здоровы! 🥂"
+        text += "\n\n---\n*Нажми «📜 Тост» ещё раз - подберу другой!*"
+        return self._make_response(text, False, 0, {})
+
+    def _prep_advice(self) -> dict:
+        rag_info = self.rag.query("подготовка застолье как правильно пить советы", k=3)
+        text = "## 🥂 Как подготовиться к застолью\n\n"
+        if rag_info:
+            text += rag_info
+        text += "\n\n---\n💡 *Если всё же перестарался - напиши **«мне плохо»**.*"
+        return self._make_response(text, False, 0, {})
+
+    def _get_fact(self) -> dict:
+        rag_info = self.rag.query("интересный факт алкоголь миф правда", k=2)
+        text = "## 💡 Интересный факт\n\n"
+        text += rag_info if rag_info else "Алкоголь перерабатывается со скоростью ~10 мл чистого спирта в час. Ускорить этот процесс невозможно!"
+        text += "\n\n---\n*Напиши **«ещё факт»** - расскажу следующий!*"
+        return self._make_response(text, False, 0, {})
+
     def _generate_recommendation(self, profile: dict) -> str:
         age = self._extract_number(profile.get("age", "25"))
         weight = self._extract_number(profile.get("weight", "70"))
@@ -276,7 +295,6 @@ class AntiHangoverBot:
         amount_str = profile.get("amount", "500 мл пива")
         symptoms = str(profile.get("symptoms", "1"))
 
-        # Определяем тип напитка по ответу на вопрос 3
         if "1" in drink_type_ans:
             main_drink = "пиво"
         elif "2" in drink_type_ans:
@@ -287,27 +305,18 @@ class AntiHangoverBot:
             main_drink = "водка"
 
         is_yorsh = "5" in drink_type_ans
-
-        # Парсим объём и считаем спирт
         volume_ml, parsed_drink = parse_amount_to_ml(amount_str)
-        if is_yorsh:
-            # При ёрше берём parsed_drink или водку как базу
-            pure_alcohol = calc_pure_alcohol_g(volume_ml, parsed_drink)
-        else:
-            pure_alcohol = calc_pure_alcohol_g(volume_ml, main_drink)
-
-        # Г спирта на кг веса
+        drink_for_calc = parsed_drink if is_yorsh else main_drink
+        pure_alcohol = calc_pure_alcohol_g(volume_ml, drink_for_calc)
         alcohol_per_kg = pure_alcohol / max(weight, 40)
 
-        # Базовый уровень по формуле
         if alcohol_per_kg < 1.0:
-            severity_level = 1  # лёгкое
+            severity_level = 1
         elif alcohol_per_kg < 2.0:
-            severity_level = 2  # среднее
+            severity_level = 2
         else:
-            severity_level = 3  # тяжёлое
+            severity_level = 3
 
-        # Штрафы
         penalties = []
         if is_yorsh:
             severity_level = min(severity_level + 1, 3)
@@ -319,7 +328,7 @@ class AntiHangoverBot:
             penalties.append(f"недостаточно сна ({int(sleep_h)} ч.)")
         if "3" in food_ans:
             severity_level = min(severity_level + 1, 3)
-            penalties.append("пил почти на голодный желудок")
+            penalties.append("пил на голодный желудок")
         if age > 40:
             severity_level = min(severity_level + 1, 3)
             penalties.append("возраст старше 40 лет")
@@ -329,12 +338,10 @@ class AntiHangoverBot:
         severity_map = {1: "лёгкое", 2: "среднее", 3: "тяжёлое"}
         severity = severity_map[severity_level]
 
-        # Запрос к RAG
         rag_info = self.rag.query(
-            f"похмелье {severity} лечение рекомендации симптомы восстановление", k=2
+            f"похмелье {severity} лечение рекомендации восстановление", k=2
         )
 
-        # Строим отчёт
         result = (
             f"## 🩺 Результат диагностики\n\n"
             f"**Степень похмелья: {severity.upper()}**\n\n"
@@ -355,12 +362,11 @@ class AntiHangoverBot:
         result += "\n" + self._get_recommendations(severity)
 
         if rag_info:
-            result += f"\n\n### 📖 Дополнительно из базы знаний\n\n{rag_info}"
+            result += f"\n\n### 📖 Дополнительно\n\n{rag_info}"
 
         result += (
             "\n\n---\n"
-            "⚠️ *Если симптомы не улучшаются через 3 часа или появились судороги, "
-            "боль в груди - немедленно вызови скорую (103).*"
+            "⚠️ *При судорогах, боли в груди или потере сознания - скорая (103).*"
         )
 
         return result
@@ -369,125 +375,44 @@ class AntiHangoverBot:
         if severity == "лёгкое":
             return (
                 "### 💊 Рекомендации\n\n"
-                "**Сразу:**\n"
                 "- Выпей 500-700 мл воды или Регидрона\n"
                 "- Активированный уголь (1 таблетка на 10 кг веса)\n"
-                "- Поешь: бульон, тост, банан\n\n"
-                "**В течение дня:**\n"
-                "- Пить воду маленькими глотками - 1.5-2 литра\n"
+                "- Поешь: бульон, тост, банан\n"
                 "- Ибупрофен 400 мг от головной боли (после еды!)\n"
-                "- Прогулка на свежем воздухе\n"
-                "- Витамин C 500 мг\n\n"
+                "- Прогулка на свежем воздухе\n\n"
                 "⏱ **Прогноз:** лучше через 3-5 часов. 👍"
             )
         elif severity == "среднее":
             return (
                 "### 💊 Рекомендации\n\n"
-                "**Срочно:**\n"
                 "- Регидрон - 1 пакет на 1 литр воды, пить медленно\n"
                 "- Активированный уголь или Энтеросгель\n"
-                "- Ибупрофен 400 мг (только после еды!)\n\n"
-                "**Питание:**\n"
-                "- Куриный бульон с сухариками\n"
-                "- Банан - восстановит калий\n"
-                "- 2-3 ст. ложки мёда - ускоряет вывод алкоголя\n\n"
-                "**Режим:**\n"
-                "- Постельный режим 3-4 часа\n"
-                "- Никакого алкоголя «для опохмела»!\n\n"
+                "- Ибупрофен 400 мг (только после еды!)\n"
+                "- Куриный бульон, банан, 2-3 ст. ложки мёда\n"
+                "- Постельный режим 3-4 часа\n\n"
                 "⏱ **Прогноз:** улучшение через 6-8 часов. ⏳"
             )
         else:
             return (
                 "### 💊 Рекомендации (тяжёлый случай)\n\n"
-                "**Срочно:**\n"
                 "- Регидрон - 1 литр медленно в течение часа\n"
                 "- Энтеросгель - максимальная доза\n"
-                "- Лечь, обеспечить свежий воздух\n\n"
-                "**Важно:**\n"
                 "- ❌ Парацетамол запрещён! Опасен для печени после алкоголя\n"
-                "- Ибупрофен - только если нет проблем с желудком\n"
                 "- Полный покой весь день\n"
-                "- Пить воду постоянно маленькими глотками\n\n"
-                "**Питание:**\n"
-                "- Только лёгкое: бульон, тост, банан\n"
+                "- Пить воду постоянно маленькими глотками\n"
                 "- Кефир или айран - обволакивает желудок\n\n"
-                "⚠️ **При рвоте более 6 часов или потере сознания - скорая (103)!**\n\n"
+                "⚠️ **При рвоте более 6 часов - скорая (103)!**\n\n"
                 "⏱ **Прогноз:** улучшение через 12-24 часа. 😔"
             )
 
-    # ------------------------------------------------------------------
-    # Советы по застолью
-    # ------------------------------------------------------------------
-    def _prep_advice(self) -> dict:
-        rag_info = self.rag.query("подготовка застолье как правильно пить советы", k=3)
-        text = (
-            "## 🥂 Как подготовиться к застолью\n\n"
-            "Правильная подготовка снижает риск тяжёлого похмелья в 2-3 раза.\n\n"
-        )
-        if rag_info:
-            text += rag_info
-        text += (
-            "\n\n---\n"
-            "💡 *Если всё же перестарался - напиши **«мне плохо»**, "
-            "проведём диагностику.*"
-        )
-        return self._make_response(text, False, 0, {})
-
-    # ------------------------------------------------------------------
-    # Тосты
-    # ------------------------------------------------------------------
-    def _get_toast(self, text_lower: str) -> dict:
-        if any(w in text_lower for w in ["день рождения", "рождения", "birthday"]):
-            query = "тост день рождения поздравление"
-        elif any(w in text_lower for w in ["свадьб", "молодожён", "невест", "жених"]):
-            query = "тост свадьба молодые"
-        elif any(w in text_lower for w in ["друг", "дружб", "компани"]):
-            query = "тост дружба друзья"
-        elif any(w in text_lower for w in ["здоровь", "здоров"]):
-            query = "тост здоровье долголетие"
-        elif any(w in text_lower for w in ["встреч", "встретил", "вместе"]):
-            query = "тост встреча вместе"
-        elif any(w in text_lower for w in ["смешн", "юмор", "прикол"]):
-            query = "тост юмористический смешной"
-        elif any(w in text_lower for w in ["коротк", "быстр"]):
-            query = "тост короткий универсальный"
-        else:
-            query = "тост универсальный"
-
-        rag_info = self.rag.query(query, k=2)
-        text = "## 📜 Тост\n\n"
-        if rag_info:
-            text += rag_info
-        else:
-            text += "Будем здоровы! 🥂"
-        text += "\n\n---\n💡 *Уточни повод - подберу более подходящий тост!*"
-        return self._make_response(text, False, 0, {})
-
-    # ------------------------------------------------------------------
-    # Факты
-    # ------------------------------------------------------------------
-    def _get_fact(self) -> dict:
-        rag_info = self.rag.query(
-            "интересный факт алкоголь миф правда", k=2
-        )
-        text = "## 💡 Интересный факт\n\n"
-        if rag_info:
-            text += rag_info
-        else:
-            text += "Алкоголь перерабатывается печенью со скоростью ~10 мл чистого спирта в час. Ускорить этот процесс невозможно!"
-        text += "\n\n---\n*Напиши **«ещё факт»** - расскажу следующий!*"
-        return self._make_response(text, False, 0, {})
-
-    # ------------------------------------------------------------------
-    # Вспомогательные методы
-    # ------------------------------------------------------------------
     @staticmethod
-    def _make_response(text: str, diag_mode: bool, diag_step: int, profile: dict) -> dict:
+    def _make_response(text, diag_mode, diag_step, profile):
         return {
             "text": text,
             "diagnosis_mode": diag_mode,
             "diagnosis_step": diag_step,
             "user_profile": profile,
+            "toast_menu": False,
         }
 
     @staticmethod
